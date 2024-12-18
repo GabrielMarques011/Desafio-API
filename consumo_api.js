@@ -1,6 +1,8 @@
+import fetch from 'node-fetch'; // Caso não esteja em ambiente que já suporta fetch
+import pLimit from 'p-limit'; // Limita o número de requisições simultâneas
+import fs from 'fs'; // Módulo File System para manipular arquivos
+
 async function fetchAllPages() {
-    const startDate = '2024-11-01';
-    const endDate = '2024-11-14';
     const baseUrl = 'https://api.themoviedb.org/3/discover/movie';
     const options = {
         method: 'GET',
@@ -11,35 +13,48 @@ async function fetchAllPages() {
     };
 
     try {
-        // Fazendo a primeira requisição para obter o número total de páginas
-        const firstResponse = await fetch(`${baseUrl}?start_date=${startDate}&end_date=${endDate}&page=1`, options);
+        // Fazendo a primeira requisição para descobrir o total de páginas
+        const firstResponse = await fetch(`${baseUrl}?page=1`, options);
         const firstData = await firstResponse.json();
 
-        const totalPages = firstData.total_pages; // Número total de páginas
-        console.log(`Total de páginas: ${totalPages}`);
+        console.log(firstData);
 
-        let allResults = []; // Array para armazenar todos os dados
+        const totalPages = Math.min(firstData.total_pages, 500); // Limita a 500 páginas
+        console.log(`Total de páginas a processar: ${totalPages}`);
 
-        // Percorrendo todas as páginas dinamicamente
-        for (let page = 1; page <= totalPages; page++) {
-            const url = `${baseUrl}?start_date=${startDate}&end_date=${endDate}&page=${page}`;
-            const response = await fetch(url, options);
-            const data = await response.json();
+        // Configurando o limitador para 50 requisições simultâneas
+        const limit = pLimit(50);
 
-            console.log(data.results);
+        // Criando as requisições para todas as páginas
+        const fetchPromises = Array.from({ length: totalPages }, (_, index) => {
+            const page = index + 1;
+            return limit(() =>
+                fetch(`${baseUrl}?page=${page}`, options)
+                .then(response => response.json())
+                .then(data => {
+                    if (Array.isArray(data.results)) {
+                        // Extrai apenas os títulos dos filmes usando map()
+                        const votos = data.results.map(filme => filme.vote_average); // Avaliação Geral
+                        const qntVotos = data.results.map(filme => filme.vote_count); // Quantidade de votos
 
-            // Passando por todos os filmes que estão percorrendo determinadas paginas
-            /* data.results.forEach(totalResult => {
-                console.log(totalResult.original_title);
-            }); */
+                        console.log(`Página ${page} contém os seguintes títulos:`, votos, qntVotos);
+                        return votos, qntVotos; // Retorna apenas os títulos
+                    } else {
+                        console.warn(`Página ${page} não contém resultados válidos.`);
+                        return []; // Retorna array vazio
+                    }
+                })
+            );
+        });
 
-            // Adicionando os resultados da página atual ao array
-            allResults = allResults.concat(data.results);
-            /* console.log(`Página ${page} processada.`); */
-        }
+        // Executa todas as requisições simultâneas controladas
+        const results = await Promise.all(fetchPromises);
 
-        console.log(`Total de mudanças coletadas: ${allResults.length}`);
-        return allResults;
+        // Unindo todos os resultados em um único array
+        const allMovies = results.flat(); // Flatten para unir arrays de filmes
+
+        console.log(`Total de filmes coletados: ${allMovies.length}`);
+        return allMovies;
     } catch (err) {
         console.error('Erro ao buscar dados:', err);
     }
