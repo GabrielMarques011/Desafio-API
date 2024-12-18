@@ -1,6 +1,9 @@
-import fetch from 'node-fetch'; // Caso não esteja em ambiente que já suporta fetch
-import pLimit from 'p-limit'; // Limita o número de requisições simultâneas
-import fs from 'fs'; // Módulo File System para manipular arquivos
+import fetch from 'node-fetch';
+import pLimit from 'p-limit';
+import terminalKit from 'terminal-kit';
+import fs from 'fs'; // Importando módulo fs para manipulação de arquivos
+
+const { terminal } = terminalKit; // Importa a função terminal
 
 async function fetchAllPages() {
     const baseUrl = 'https://api.themoviedb.org/3/discover/movie';
@@ -8,53 +11,64 @@ async function fetchAllPages() {
         method: 'GET',
         headers: {
             accept: 'application/json',
-            Authorization: 'Bearer eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiIyNTgyNjM0YTg3NzkxOWMwMWExMjA4NjVjZjRkZmY3YSIsIm5iZiI6MTczMjgwMzYyOS4zNTAxODIsInN1YiI6IjY3NDg3YjNkODQ1NGM2Y2EzNjM2NTkyZSIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.OwczzDIdxuFm-GFRkEDlLcIzKvWka1e58b0txdZIdhE'
+            Authorization: 'Bearer eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiIyNTgyNjM0YTg3NzkxOWMwMWExMjA4NjVjZjRkZmY3YSIsIm5iZiI6MTczMjgwMzYyOS4zNTAxODIsInN1YiI6IjY3NDg3YjNkODQ1NGM2Y2EzNjM2NTkyZSIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.OwczzDIdxuFm-GFRkEDlLcIzKvWka1e58b0txdZIdhE' // Coloque seu Token aqui
         }
     };
 
     try {
-        // Fazendo a primeira requisição para descobrir o total de páginas
         const firstResponse = await fetch(`${baseUrl}?page=1`, options);
         const firstData = await firstResponse.json();
+        const totalPages = Math.min(firstData.total_pages, 500);
 
-        console.log(firstData);
-
-        const totalPages = Math.min(firstData.total_pages, 500); // Limita a 500 páginas
-        console.log(`Total de páginas a processar: ${totalPages}`);
-
-        // Configurando o limitador para 50 requisições simultâneas
         const limit = pLimit(50);
+        const allMovies = [];
 
-        // Criando as requisições para todas as páginas
         const fetchPromises = Array.from({ length: totalPages }, (_, index) => {
             const page = index + 1;
+
             return limit(() =>
                 fetch(`${baseUrl}?page=${page}`, options)
-                .then(response => response.json())
-                .then(data => {
-                    if (Array.isArray(data.results)) {
-                        // Extrai apenas os títulos dos filmes usando map()
-                        const votos = data.results.map(filme => filme.vote_average); // Avaliação Geral
-                        const qntVotos = data.results.map(filme => filme.vote_count); // Quantidade de votos
-
-                        console.log(`Página ${page} contém os seguintes títulos:`, votos, qntVotos);
-                        return votos, qntVotos; // Retorna apenas os títulos
-                    } else {
-                        console.warn(`Página ${page} não contém resultados válidos.`);
-                        return []; // Retorna array vazio
-                    }
-                })
+                    .then(response => response.json())
+                    .then(data => {
+                        // Extrai os dados relevantes de cada filme e adiciona ao array allMovies
+                        data.results.forEach(filme => {
+                            allMovies.push({
+                                title: filme.original_title,
+                                votes: filme.vote_count,
+                                vote_average: filme.vote_average
+                            });
+                        });
+                    })
             );
         });
 
-        // Executa todas as requisições simultâneas controladas
-        const results = await Promise.all(fetchPromises);
+        // Espera que todas as páginas sejam processadas
+        await Promise.all(fetchPromises);
 
-        // Unindo todos os resultados em um único array
-        const allMovies = results.flat(); // Flatten para unir arrays de filmes
+        // Pega os 10 filmes mais votados
+        const top10Movies = allMovies
+            .sort((a, b) => b.votes - a.votes) // Ordena pelo número de votos
+            .slice(0, 50); // Pega apenas os 10 primeiros
 
-        console.log(`Total de filmes coletados: ${allMovies.length}`);
-        return allMovies;
+        console.log("\nTop 10 Filmes mais votados:");
+
+        // Exibe um gráfico de barras manualmente no terminal
+        top10Movies.forEach(filme => {
+            const bar = '-'.repeat(filme.votes / 1000); // Ajusta o tamanho da barra (dividido por 1000)
+            terminal.cyan(`${filme.title} `);
+            terminal.green(`${bar} (${filme.votes} votos)\n`);
+        });
+
+        // Formata os dados para armazenar no arquivo .txt
+        const movieData = top10Movies.map(filme => {
+            return `Título: ${filme.title}\nVotos: ${filme.votes}\nMédia de Votos: ${filme.vote_average}\n`;
+        }).join('\n');
+
+        // Armazena os dados no arquivo .txt
+        fs.writeFileSync('filmes.txt', movieData); // Escreve os dados no arquivo de texto
+
+        console.log("Dados armazenados em 'filmes.txt'");
+
     } catch (err) {
         console.error('Erro ao buscar dados:', err);
     }
